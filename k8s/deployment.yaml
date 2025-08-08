@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
       - name: flask-app
-        image: yourdockerhub/flask-app:latest   # Will update via CI
+        image: abinaya780/flask-demo:latest   # Will update via CI
         ports:
         - containerPort: 5000
       imagePullSecrets:
