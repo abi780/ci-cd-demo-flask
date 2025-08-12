@@ -1,14 +1,11 @@
-
 pipeline {
     agent any
 
-    triggers {
-        githubPush() // Triggers on GitHub webhook push
-    }
-
     environment {
-        IMAGE_NAME = "flask-demo"
-        K8S_NAMESPACE = "default"
+        REGISTRY       = "docker.io/your_dockerhub_username"  // Change to your registry
+        IMAGE_NAME     = "ci-cd-demo-flask"
+        KUBECONFIG_CRED = "kubeconfig-credentials-id"         // Jenkins Kubeconfig credential ID
+        DOCKER_CRED    = "dockerhub-credentials-id"           // Jenkins Docker Hub credential ID
     }
 
     stages {
@@ -18,54 +15,44 @@ pipeline {
             }
         }
 
-        stage('Set Build Tag') {
-            steps {
-                script {
-                    // Short commit hash for tagging
-                    COMMIT_HASH = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
-                    echo "Build Tag: ${COMMIT_HASH}"
-                }
-            }
-        }
-
         stage('Build Docker Image') {
             steps {
-                sh """
-                    docker build -t ${IMAGE_NAME}:latest -t ${IMAGE_NAME}:${COMMIT_HASH} .
-                """
-            }
-        }
-
-        stage('Push to Docker Hub') {
-            steps {
-                withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                script {
+                    def tag = "v${env.BUILD_NUMBER}"
                     sh """
-                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                        docker tag ${IMAGE_NAME}:latest $DOCKER_USER/${IMAGE_NAME}:latest
-                        docker tag ${IMAGE_NAME}:${COMMIT_HASH} $DOCKER_USER/${IMAGE_NAME}:${COMMIT_HASH}
-                        docker push $DOCKER_USER/${IMAGE_NAME}:latest
-                        docker push $DOCKER_USER/${IMAGE_NAME}:${COMMIT_HASH}
+                        docker build -t ${REGISTRY}/${IMAGE_NAME}:${tag} .
+                        docker tag ${REGISTRY}/${IMAGE_NAME}:${tag} ${REGISTRY}/${IMAGE_NAME}:latest
                     """
+                    env.IMAGE_TAG = tag
                 }
             }
         }
 
-        stage('Update Kubernetes Manifest') {
+        stage('Push to Docker Registry') {
             steps {
                 script {
-                    sh """
-                        sed -i 's|image: .*|image: ${DOCKER_USER}/${IMAGE_NAME}:${COMMIT_HASH}|' k8s/deployment.yaml
-                    """
+                    withCredentials([usernamePassword(credentialsId: "${DOCKER_CRED}", usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                        sh """
+                            echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                            docker push ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
+                            docker push ${REGISTRY}/${IMAGE_NAME}:latest
+                        """
+                    }
                 }
             }
         }
 
         stage('Deploy to Kubernetes') {
             steps {
-                sh """
-                    kubectl apply -f k8s/deployment.yaml -n ${K8S_NAMESPACE}
-                    kubectl rollout status deployment/${IMAGE_NAME} -n ${K8S_NAMESPACE}
-                """
+                script {
+                    withCredentials([file(credentialsId: "${KUBECONFIG_CRED}", variable: 'KUBECONFIG_FILE')]) {
+                        sh """
+                            export KUBECONFIG=$KUBECONFIG_FILE
+                            sed -i 's|IMAGE_PLACEHOLDER|${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}|g' k8s/deployment.yaml
+                            kubectl apply -f k8s/deployment.yaml
+                        """
+                    }
+                }
             }
         }
     }
