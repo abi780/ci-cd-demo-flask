@@ -2,44 +2,30 @@ pipeline {
     agent any 
  
     environment { 
-        IMAGE_NAME = 'flask-demo'
+        DOCKER_USER = 'abinaya780' 
+        DOCKER_PASS = credentials('dockerhub-creds')  // create this in Jenkins Credentials 
+        IMAGE_NAME = 'flask-demo' 
     } 
  
     stages { 
         stage('Clone Repository') { 
             steps { 
-                git branch: 'main', url: 'https://github.com/abi780/ci-cd-demo-flask.git' 
+                git 'https://github.com/abi780/ci-cd-demo-flask.git' 
             } 
         } 
-
-        stage('Set Build Tag') {
-            steps {
-                script {
-                    COMMIT_HASH = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
-                    echo "Using commit hash: ${COMMIT_HASH}"
-                }
-            }
-        }
  
         stage('Build Docker Image') { 
             steps { 
-                sh '''
-                    docker build -t ${IMAGE_NAME}:latest -t ${IMAGE_NAME}:${COMMIT_HASH} .
-                '''
+                sh 'docker build -t $DOCKER_USER/$IMAGE_NAME:latest .' 
             } 
         } 
  
         stage('Push to Docker Hub') { 
             steps { 
-                withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-                    sh '''
-                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                        docker tag ${IMAGE_NAME}:latest $DOCKER_USER/${IMAGE_NAME}:latest
-                        docker tag ${IMAGE_NAME}:${COMMIT_HASH} $DOCKER_USER/${IMAGE_NAME}:${COMMIT_HASH}
-                        docker push $DOCKER_USER/${IMAGE_NAME}:latest
-                        docker push $DOCKER_USER/${IMAGE_NAME}:${COMMIT_HASH}
-                    '''
-                }
+                sh ''' 
+                    echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin 
+                    docker push $DOCKER_USER/$IMAGE_NAME:latest 
+                ''' 
             } 
         } 
  
@@ -52,4 +38,4 @@ pipeline {
             } 
         } 
     } 
-}
+} 
