@@ -1,59 +1,55 @@
-pipeline {
-    agent any
+pipeline { 
+    agent any 
+ 
+    environment { 
+        IMAGE_NAME = 'flask-demo'
+    } 
+ 
+    stages { 
+        stage('Clone Repository') { 
+            steps { 
+                git branch: 'main', url: 'https://github.com/abi780/ci-cd-demo-flask.git' 
+            } 
+        } 
 
-    environment {
-        REGISTRY       = "docker.io/your_dockerhub_username"  // Change to your registry
-        IMAGE_NAME     = "ci-cd-demo-flask"
-        KUBECONFIG_CRED = "kubeconfig-credentials-id"         // Jenkins Kubeconfig credential ID
-        DOCKER_CRED    = "dockerhub-credentials-id"           // Jenkins Docker Hub credential ID
-    }
-
-    stages {
-        stage('Clone Repository') {
-            steps {
-                git branch: 'main', url: 'https://github.com/abi780/ci-cd-demo-flask.git'
-            }
-        }
-
-        stage('Build Docker Image') {
+        stage('Set Build Tag') {
             steps {
                 script {
-                    def tag = "v${env.BUILD_NUMBER}"
-                    sh """
-                        docker build -t ${REGISTRY}/${IMAGE_NAME}:${tag} .
-                        docker tag ${REGISTRY}/${IMAGE_NAME}:${tag} ${REGISTRY}/${IMAGE_NAME}:latest
-                    """
-                    env.IMAGE_TAG = tag
+                    COMMIT_HASH = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                    echo "Using commit hash: ${COMMIT_HASH}"
                 }
             }
         }
-
-        stage('Push to Docker Registry') {
-            steps {
-                script {
-                    withCredentials([usernamePassword(credentialsId: "${DOCKER_CRED}", usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-                        sh """
-                            echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                            docker push ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}
-                            docker push ${REGISTRY}/${IMAGE_NAME}:latest
-                        """
-                    }
+ 
+        stage('Build Docker Image') { 
+            steps { 
+                sh '''
+                    docker build -t ${IMAGE_NAME}:latest -t ${IMAGE_NAME}:${COMMIT_HASH} .
+                '''
+            } 
+        } 
+ 
+        stage('Push to Docker Hub') { 
+            steps { 
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    sh '''
+                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                        docker tag ${IMAGE_NAME}:latest $DOCKER_USER/${IMAGE_NAME}:latest
+                        docker tag ${IMAGE_NAME}:${COMMIT_HASH} $DOCKER_USER/${IMAGE_NAME}:${COMMIT_HASH}
+                        docker push $DOCKER_USER/${IMAGE_NAME}:latest
+                        docker push $DOCKER_USER/${IMAGE_NAME}:${COMMIT_HASH}
+                    '''
                 }
-            }
-        }
-
-        stage('Deploy to Kubernetes') {
-            steps {
-                script {
-                    withCredentials([file(credentialsId: "${KUBECONFIG_CRED}", variable: 'KUBECONFIG_FILE')]) {
-                        sh """
-                            export KUBECONFIG=$KUBECONFIG_FILE
-                            sed -i 's|IMAGE_PLACEHOLDER|${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}|g' k8s/deployment.yaml
-                            kubectl apply -f k8s/deployment.yaml
-                        """
-                    }
-                }
-            }
-        }
-    }
+            } 
+        } 
+ 
+        stage('Deploy to Kubernetes') { 
+            steps { 
+                sh ''' 
+                    kubectl apply -f kubernetes/deployment.yaml 
+                    kubectl apply -f kubernetes/service.yaml 
+                ''' 
+            } 
+        } 
+    } 
 }
